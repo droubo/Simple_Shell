@@ -10,6 +10,15 @@
 #define MAX_DIR_LEN 128
 #define MIN_ARGS 6
 
+void format_arguments(char* inpt, char** arg)
+{
+	int i = 0;
+	char *str = inpt;
+	while ((arg[i++] = strtok_r(str, " ", &str)) != NULL) {
+		if (i > MIN_ARGS) *arg = realloc(*arg, i + MIN_ARGS);
+	}
+}
+
 void change_directory(char *path) {
 	if (path == NULL) {
 		printf("No path entered!\n");
@@ -20,55 +29,33 @@ void change_directory(char *path) {
 	}
 	return;
 }
-void pipe_exec(char** arg, char** args_piped) {
-
+void pipe_exec(char** cmd) {
 	int fd[2];
-	pid_t pr1, pr2;
-
-	if (pipe(fd) < 0) {
-		printf("\nError");
-		return;
-	}
-	pr1 = fork();
-	if (pr1 < 0) {
-		return;
-	}
-
-	if (pr1 == 0) {
-
-		close(fd[0]);
-
-		dup2(fd[1], STDOUT_FILENO);
-
-		close(fd[1]);
-
-		if (execvp(arg[0], arg) < 0) {
-			printf("\nCommand 1 not found.");
-			exit(0);
+	pid_t pid;
+	int fdd = 0;
+	int i = 0;
+	char **command;
+	while (cmd[i] != NULL) {
+		format_arguments(cmd[i], command);
+		pipe(fd);
+		if ((pid = fork()) == -1) {
+			perror("fork");
+			exit(1);
 		}
-	}
-	else {
-		pr2 = fork();
-
-		if (pr2 < 0) {
-			return;
-		}
-
-		if (pr2 == 0) {
-			close(fd[1]);
-
-			dup2(fd[0], STDIN_FILENO);
-
-			close(fd[0]);
-
-			if (execvp(args_piped[0], args_piped) < 0) {
-				printf("\nCommand 2 not found");
-				exit(0);
+		else if (pid == 0) {
+			dup2(fdd, 0);
+			if ((cmd[i+1]) != NULL) {
+				dup2(fd[1], 1);
 			}
+			close(fd[0]);
+			execvp(command[0], command);
+			exit(1);
 		}
 		else {
 			wait(NULL);
-			wait(NULL);
+			close(fd[1]);
+			fdd = fd[0];
+			i++;
 		}
 	}
 }
@@ -87,25 +74,16 @@ void execute_simple_command(char** arg) {
 	}
 }
 
-void format_arguments(char* inpt, char** arg)
-{
-	int i = 0;
-	char *str = inpt;
-	while ((arg[i++] = strtok_r(str, " " , &str)) != NULL) {
-		if (i > MIN_ARGS) *arg = realloc(*arg, i + MIN_ARGS);
-	}
-}
 
 int split_pipe(char* str, char** stripped)
 {
 	int i = 0;
 	char* rest = str;
 	while ((stripped[i] = strtok_r(rest, "|", &rest))) {
-		printf("%s\n", stripped[i]);
 		i++;
 		if (i > 32) break;
 	}
-	return 0;
+	return i;
 }
 
 int mode(char *input){
@@ -116,17 +94,13 @@ int mode(char *input){
 	int exit_mode = !strcmp(input, "exit");
 	int rdr_mode = (strchr(input, '>') != NULL || strchr(input, '<') != NULL);
 
-	format_arguments(input, args);
 
 	if (exit_mode) exit(0);
 
-	else if (!strcmp(args[0], "cd")) {
-		change_directory(args[1]);
-		return 0;
-	}
 	else if (pipe_mode) {
-		printf("enter");
-		split_pipe(input, stripped);
+		int num_of_commands = split_pipe(input, stripped);
+		pipe_exec(stripped);
+		printf("exited");
 		return 0;
 	}
 	else if (rdr_mode) {
@@ -134,6 +108,11 @@ int mode(char *input){
 		return 0;
 	}
 	else {
+		format_arguments(input, args);
+		if (!strcmp(args[0], "cd")) {
+			change_directory(args[1]);
+			return 0;
+		}
 		printf("\n%s\n", input);	
 		execute_simple_command(args);
 		return 0;
