@@ -6,18 +6,10 @@
 #include <sys/types.h> 
 #include <sys/wait.h>
 
-#define MINSIZE 16
+#define MINSIZE 8
 #define MAX_DIR_LEN 128
-#define MIN_ARGS 6
-
-void format_arguments(char* inpt, char** arg)
-{
-	int i = 0;
-	char *str = inpt;
-	while ((arg[i++] = strtok_r(str, " ", &str)) != NULL) {
-		if (i > MIN_ARGS) *arg = realloc(*arg, i + MIN_ARGS);
-	}
-}
+#define MIN_ARGS 12
+#define MIN_PIPES 512
 
 void change_directory(char *path) {
 	if (path == NULL) {
@@ -29,14 +21,22 @@ void change_directory(char *path) {
 	}
 	return;
 }
-void pipe_exec(char** cmd) {
+void remove_blankspaces(char *s) {
+	const char* d = s;
+	do {
+		while (*d == ' ') {
+			++d;
+		}
+	} while (*s++ = *d++);
+}
+void execute_commands(char** cmd) {
 	int fd[2];
 	pid_t pid;
 	int fdd = 0;
 	int i = 0;
-	char **command;
+	char *command[MIN_ARGS];
 	while (cmd[i] != NULL) {
-		format_arguments(cmd[i], command);
+		splitter(cmd[i], command, " ");
 		pipe(fd);
 		if ((pid = fork()) == -1) {
 			perror("fork");
@@ -44,7 +44,7 @@ void pipe_exec(char** cmd) {
 		}
 		else if (pid == 0) {
 			dup2(fdd, 0);
-			if ((cmd[i+1]) != NULL) {
+			if ((cmd[i + 1]) != NULL) {
 				dup2(fd[1], 1);
 			}
 			close(fd[0]);
@@ -59,70 +59,105 @@ void pipe_exec(char** cmd) {
 		}
 	}
 }
-void execute_simple_command(char** arg) {
-	pid_t child = fork();
-	if (child == 0) {
-		if (execvp(arg[0], arg) < 0) {
-			printf("\nInvalid Command");
-		}
+void redirect(char **cmd, char *file, int mode) {
+	int fd[2];
+	pid_t pid_1;
+	int f;
+	int flag = STDOUT_FILENO;
+
+	if(mode == 0) f = open(file, O_WRONLY | O_APPEND | O_CREAT, S_IRWXU);
+	else if(mode == 1) f = open(file, O_WRONLY | O_TRUNC | O_CREAT, S_IRWXU);
+	else if (mode == 2) {
+		f = open(file, O_RDONLY, S_IWUSR);
+		flag = STDIN_FILENO;
+	}
+	remove_blankspaces(file);
+	printf("%d\n", strlen(file));
+
+	pipe(fd);
+	if (pid_1 = fork() == -1) {
+		perror("fork");
+		exit(1);
+	}
+	else if (pid_1 == 0) {
+		dup2(f, flag);
+		close(f);
+		execute_commands(cmd);
 		exit(0);
 	}
-	else if (child == -1) return;
 	else {
 		wait(NULL);
-		return;
 	}
 }
-
-
-int split_pipe(char* str, char** stripped)
+int splitter(char* str, char** splitted, char* splitter)
 {
 	int i = 0;
-	char* rest = str;
-	while ((stripped[i] = strtok_r(rest, "|", &rest))) {
+	char* rest = strdup(str);
+	int curr_size = MIN_PIPES;
+	while ((splitted[i] = strtok_r(rest, splitter, &rest))) {
 		i++;
-		if (i > 32) break;
+		if (i > curr_size) {
+			splitted = realloc(splitted, sizeof(char *) * (MIN_PIPES + i));
+			curr_size = MIN_PIPES + i;
+		}
 	}
 	return i;
 }
+int check_rdr_mode(char *input) {
+	if (strstr(input, ">>") != NULL) return 0;
+	else if (strchr(input, '>') != NULL) return 1;
+	else if (strchr(input, '<') != NULL) return 2;
 
-int mode(char *input){
+	return -1;
+}
+int mode(char *input) {
 
-	char  *args[MIN_ARGS];
-	char *stripped[32];
+	char **splitted = malloc(MIN_PIPES * sizeof(char *));
 	int pipe_mode = strchr(input, '|') != NULL;
 	int exit_mode = !strcmp(input, "exit");
-	int rdr_mode = (strchr(input, '>') != NULL || strchr(input, '<') != NULL);
+	int rdr_mode = check_rdr_mode(input);
 
+	splitter(input, splitted, " ");
 
 	if (exit_mode) exit(0);
 
-	else if (pipe_mode) {
-		int num_of_commands = split_pipe(input, stripped);
-		pipe_exec(stripped);
-		printf("exited");
+	else if (!strcmp(splitted[0], "cd")) {
+		change_directory(splitted[1]);
 		return 0;
 	}
-	else if (rdr_mode) {
-		printf("hello\n");
+	else if (!strcmp(splitted[0], "setenv")) {
+		if (setenv(splitted[1], splitted[2], 1) == -1) {
+			printf("Invalid command\n");
+			return 1;
+		}
+	}
+	else if (!strcmp(splitted[0], "unsetenv")) {
+		if (unsetenv(splitted[1]) == -1) {
+			printf("Invalid command\n");
+			return 1;
+		}
+	}
+	else if (!strcmp(splitted[0], "env")) {
+		char *path = getenv("PATH");
+		char *home = getenv("HOME");
+
+		printf("PATH=%s\n", (path != NULL) ? path : "NULL");
+		printf("HOME=%s\n", (home != NULL) ? home : "NULL");
+	}
+	else if (rdr_mode != -1) {
+		char *modes[3] = { ">>", ">", "<" };
+		splitter(input, splitted, modes[rdr_mode]);
+		char **cmd = malloc(MIN_PIPES * sizeof(char *));
+		splitter(splitted[0], cmd, "|");
+		redirect(cmd, splitted[1], rdr_mode);
 		return 0;
 	}
 	else {
-		format_arguments(input, args);
-		if (!strcmp(args[0], "cd")) {
-			change_directory(args[1]);
-			return 0;
-		}
-		printf("\n%s\n", input);	
-		execute_simple_command(args);
-		return 0;
+		splitter(input, splitted, "|");
+		execute_commands(splitted);
 	}
 }
 
-
-int execute_pipe() {
-
-}
 int clean_string(char* str, int size) {
 	int i = 0;
 	for (i = 0; i < size; i++) str[i] = '\0';
@@ -138,14 +173,13 @@ int print_prompt() {
 	printf("%s@cs345sh~%s$ ", user, dir);
 	return 0;
 }
-int take_user_input(char* input) {
+int take_user_input(char** input) {
 	char *buf = malloc(MINSIZE);
 	char c;
-	int input_size = MINSIZE, i=0;
+	int input_size = MINSIZE, i = 0;
 	if (print_prompt() == 1) return 1;
 
 	clean_string(buf, MINSIZE);
-	clean_string(input, MINSIZE);
 	while ((c = getchar()) != '\n' && c != EOF) {
 		buf[i++] = c;
 		if (i >= input_size) {
@@ -154,10 +188,10 @@ int take_user_input(char* input) {
 		}
 	}
 
-	if(input_size > MINSIZE) input = realloc(input, input_size);
-
+	if (input_size > MINSIZE) *input = realloc(*input, input_size);
+	clean_string(*input, input_size);
 	if (strlen(buf) != 0) {
-		strcpy(input, buf);
+		strcpy(*input, buf);
 		free(buf);
 		return 0;
 	}
@@ -172,7 +206,7 @@ int main() {
 	int i = 0;
 	while (1) {
 		input = malloc(MINSIZE);
-		if (take_user_input(input) == 0) {
+		if (take_user_input(&input) == 0) {
 			mode(input);
 			free(input);
 		}
