@@ -29,15 +29,50 @@ void remove_blankspaces(char *s) {
 		}
 	} while (*s++ = *d++);
 }
+
+int check_rdr_mode(char *input) {
+	if (strstr(input, ">>") != NULL) return 0;
+	else if (strchr(input, '>') != NULL) return 1;
+	else if (strchr(input, '<') != NULL) return 2;
+
+	return -1;
+}
+void redirect(char *command, int mode) {
+
+	pid_t pid_1;
+	int f;
+	int flag = STDOUT_FILENO;
+	char *modes[3] = { ">>", ">", "<" };
+	char **cmd = malloc(MIN_ARGS * sizeof(char *));
+	char **splitted = malloc(MIN_PIPES * sizeof(char *));
+
+	splitter(command, splitted, modes[mode]);
+	splitter(splitted[0], cmd, " ");
+
+	if (mode == 0) f = open(splitted[1], O_WRONLY | O_APPEND | O_CREAT, S_IRWXU);
+	else if (mode == 1) f = open(splitted[1], O_WRONLY | O_TRUNC | O_CREAT, S_IRWXU);
+	else if (mode == 2) {
+		f = open(splitted[1], O_RDONLY, S_IWUSR);
+		flag = STDIN_FILENO;
+	}
+	remove_blankspaces(splitted[1]);
+	dup2(f, flag);
+	close(f);
+	execvp(cmd[0], cmd);
+	//exit(0);
+	return;
+}
 void execute_commands(char** cmd) {
 	int fd[2];
 	pid_t pid;
 	int fdd = 0;
 	int i = 0;
 	char *command[MIN_ARGS];
+	int mode;
 	while (cmd[i] != NULL) {
-		splitter(cmd[i], command, " ");
+		mode = check_rdr_mode(cmd[i]);
 		pipe(fd);
+		printf("Mode:%d\n", mode);
 		if ((pid = fork()) == -1) {
 			perror("fork");
 			exit(1);
@@ -48,8 +83,14 @@ void execute_commands(char** cmd) {
 				dup2(fd[1], 1);
 			}
 			close(fd[0]);
-			execvp(command[0], command);
-			exit(1);
+			if (mode != -1) {
+				redirect(cmd[i], mode);
+			}
+			else {
+				splitter(cmd[i], command, " ");
+				execvp(command[0], command);
+			}
+			exit(0);
 		}
 		else {
 			wait(NULL);
@@ -57,36 +98,6 @@ void execute_commands(char** cmd) {
 			fdd = fd[0];
 			i++;
 		}
-	}
-}
-void redirect(char **cmd, char *file, int mode) {
-	int fd[2];
-	pid_t pid_1;
-	int f;
-	int flag = STDOUT_FILENO;
-
-	if(mode == 0) f = open(file, O_WRONLY | O_APPEND | O_CREAT, S_IRWXU);
-	else if(mode == 1) f = open(file, O_WRONLY | O_TRUNC | O_CREAT, S_IRWXU);
-	else if (mode == 2) {
-		f = open(file, O_RDONLY, S_IWUSR);
-		flag = STDIN_FILENO;
-	}
-	remove_blankspaces(file);
-	printf("%d\n", strlen(file));
-
-	pipe(fd);
-	if (pid_1 = fork() == -1) {
-		perror("fork");
-		exit(1);
-	}
-	else if (pid_1 == 0) {
-		dup2(f, flag);
-		close(f);
-		execute_commands(cmd);
-		exit(0);
-	}
-	else {
-		wait(NULL);
 	}
 }
 int splitter(char* str, char** splitted, char* splitter)
@@ -102,13 +113,6 @@ int splitter(char* str, char** splitted, char* splitter)
 		}
 	}
 	return i;
-}
-int check_rdr_mode(char *input) {
-	if (strstr(input, ">>") != NULL) return 0;
-	else if (strchr(input, '>') != NULL) return 1;
-	else if (strchr(input, '<') != NULL) return 2;
-
-	return -1;
 }
 int mode(char *input) {
 
@@ -143,14 +147,6 @@ int mode(char *input) {
 
 		printf("PATH=%s\n", (path != NULL) ? path : "NULL");
 		printf("HOME=%s\n", (home != NULL) ? home : "NULL");
-	}
-	else if (rdr_mode != -1) {
-		char *modes[3] = { ">>", ">", "<" };
-		splitter(input, splitted, modes[rdr_mode]);
-		char **cmd = malloc(MIN_PIPES * sizeof(char *));
-		splitter(splitted[0], cmd, "|");
-		redirect(cmd, splitted[1], rdr_mode);
-		return 0;
 	}
 	else {
 		splitter(input, splitted, "|");
